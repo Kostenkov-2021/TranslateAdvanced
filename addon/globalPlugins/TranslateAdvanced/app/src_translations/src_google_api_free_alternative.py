@@ -150,7 +150,7 @@ class TranslatorGoogleApiFreeAlternative:
 		baseUrl += 'tsel=0&'
 		baseUrl += 'kc=1&'
 		baseUrl += 'tk=' + str(tk) + '&'
-		content = urllib.parse.quote(text)
+		content = urllib.parse.quote(text, encoding='utf-8', errors='surrogatepass')
 		baseUrl += 'q=' + content
 		return baseUrl
 
@@ -312,6 +312,8 @@ Error:
 					# Verifica la estructura de la respuesta y accede correctamente
 					if isinstance(response, list) and len(response) > 0 and isinstance(response[0], list):
 						translated_chunk = ''.join([item[0] for item in response[0] if item[0]])
+					elif isinstance(response, list) and response[0] is None:
+						translated_chunk = chunk
 					else:
 						raise Exception(_("Estructura de respuesta inesperada"))
 					self.lang_detected = response[2]
@@ -336,7 +338,7 @@ Error:
 				self.processed_chunks += 1
 				self.first_chunk = False
 				if self.mostrar_progreso:
-					print(f"Progreso de la traducción: {self.get_progreso():.2f}%")
+					pass #print(f"Progreso de la traducción: {self.get_progreso():.2f}%")
 
 		def get_progreso(self):
 			"""

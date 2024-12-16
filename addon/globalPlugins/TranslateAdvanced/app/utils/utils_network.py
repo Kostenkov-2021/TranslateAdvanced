@@ -11,6 +11,7 @@ import ctypes.wintypes
 import ssl
 import urllib.request
 import urllib.error
+import socket
 
 # Carga traducción
 addonHandler.initTranslation()
@@ -87,45 +88,58 @@ def realizar_solicitud_https(url):
 	Si falla por un error de verificación de certificado, intenta actualizar los certificados y reintentar.
 
 	:param url: URL a la que se realizará la solicitud HTTPS.
-	:return: Respuesta de la solicitud HTTPS.
+	:return: Respuesta de la solicitud HTTPS o un mensaje de error descriptivo.
 	"""
 	try:
 		with urllib.request.urlopen(url) as response:
-			return response.read()
+			return {"succesful": True, "data": response.read()}
 	except urllib.error.URLError as e:
 		if isinstance(e.reason, ssl.SSLCertVerificationError) and e.reason.reason == "CERTIFICATE_VERIFY_FAILED":
 			actualizar_certificados_raiz()
 			# Intentar nuevamente la solicitud
-			with urllib.request.urlopen(url) as response:
-				return response.read()
+			try:
+				with urllib.request.urlopen(url) as response:
+					return {"succesful": True, "data": response.read()}
+			except urllib.error.URLError as e:
+				return {"succesful": False, "data": descripcion_error(e)}
 		else:
-			raise
+			return {"succesful": False, "data": descripcion_error(e)}
+
+def descripcion_error(e):
+	"""
+	Proporciona una descripción amigable para los errores de urllib.
+
+	:param e: Excepción capturada.
+	:return: Descripción del error en lenguaje humano.
+	"""
+	if isinstance(e.reason, socket.gaierror):
+		return _("No se pudo resolver el nombre de dominio. Por favor, verifica la URL o tu conexión a Internet.")
+	elif isinstance(e.reason, socket.timeout):
+		return _("La solicitud ha superado el tiempo de espera. Por favor, intenta nuevamente más tarde.")
+	elif isinstance(e.reason, ssl.SSLCertVerificationError):
+		return _("Error de verificación de certificado SSL. Es posible que el certificado del servidor no sea válido.")
+	elif isinstance(e.reason, ssl.SSLError):
+		return _("Error SSL. Puede haber un problema con la conexión segura.")
+	elif isinstance(e, urllib.error.HTTPError):
+		return _("Error HTTP {}: {}").format(e.code, e.reason)
+	elif isinstance(e, urllib.error.URLError):
+		return _("Error de URL: {}").format(e.reason)
+	else:
+		return _("Error desconocido: {}").format(e)
+
 ### Fin certificados
 
-def is_connected():
+def check_internet_connection():
 	"""
-	Comprueba si hay conexión a internet utilizando ctypes.
-
-	:return: True si hay conexión, False en caso contrario.
+	Comprueba si hay conexión a Internet intentando conectar a un host externo.
+	
+	Returns:
+		bool: True si hay conexión a Internet, False si no.
 	"""
-	INTERNET_CONNECTION_OFFLINE = 0x20
-	INTERNET_CONNECTION_CONFIGURED = 0x40
-	INTERNET_CONNECTION_LAN = 0x02
-	INTERNET_CONNECTION_MODEM = 0x01
-	INTERNET_CONNECTION_PROXY = 0x04
-	INTERNET_RAS_INSTALLED = 0x10
-	INTERNET_CONNECTION_MODEM_BUSY = 0x08
-	INTERNET_CONNECTION_ONLINE = 0x01
-
-	# Cargar la biblioteca wininet.dll
-	wininet = ctypes.WinDLL("wininet.dll")
-
-	# Comprobar el estado de conexión
-	flags = ctypes.c_int(0)
-	connection = wininet.InternetGetConnectedState(ctypes.byref(flags), 0)
-
-	# Analizar los indicadores de conexión
-	if connection:
-		return not bool(flags.value & INTERNET_CONNECTION_OFFLINE)
-	else:
-		return False
+	try:
+		# Intentar conectar a un host externo (8.8.8.8 es un servidor DNS público de Google)
+		socket.create_connection(("8.8.8.8", 53), timeout=5)
+		return True
+	except OSError:
+		pass
+	return False

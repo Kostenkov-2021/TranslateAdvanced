@@ -180,7 +180,7 @@ Error:
 				if self._stop_event.is_set():
 					self.error = {"success": True, "data": _("Proceso cancelado por el usuario")}
 					return
-				url = url_template.format(lang_from=self.lang_from, lang_to=self.lang_to, text=urllibRequest.quote(chunk.encode('utf-8')))
+				url = url_template.format(lang_from=self.lang_from, lang_to=self.lang_to, text=urllibRequest.quote(chunk.encode('utf-8', 'surrogatepass')))
 				try:
 					response = json.load(self.opener.open(url))
 					self.lang_detected = response['src']
@@ -188,13 +188,15 @@ Error:
 					if self.first_chunk and self.lang_from == "auto" and self.lang_detected == self.lang_to and self.lang_swap is not None:
 						self.lang_to = self.lang_swap
 						self.first_chunk = False
-						url = url_template.format(lang_from=self.lang_from, lang_to=self.lang_to, text=urllibRequest.quote(chunk.encode('utf-8')))
+						url = url_template.format(lang_from=self.lang_from, lang_to=self.lang_to, text=urllibRequest.quote(chunk.encode('utf-8', 'surrogatepass')))
 						response = json.load(self.opener.open(url))
 				except Exception as e:
 					# Si ocurre un error, detener el proceso de traducción
 					self.error = {"success": True, "data": str(e)}
 					return
-				self.translation += "".join(sentence["trans"] for sentence in response["sentences"])
+				# Verificar si la clave 'sentences' existe en la respuesta antes de intentar acceder a ella
+				if "sentences" in response:
+					self.translation += "".join(sentence["trans"] for sentence in response["sentences"])
 				self.processed_chunks += 1
 				self.first_chunk = False
 				if self.mostrar_progreso:

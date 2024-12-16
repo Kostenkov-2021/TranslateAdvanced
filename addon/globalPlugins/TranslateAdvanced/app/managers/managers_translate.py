@@ -6,11 +6,12 @@
 import addonHandler
 import globalVars
 import logHandler
+import languageHandler
 import braille
 import speechViewer
+import ui
 from speech import *
 # Carga estándar
-
 import re
 # Carga personal
 from ..src_translations.src_google_original import TranslatorGoogle
@@ -20,6 +21,10 @@ from ..src_translations.src_google_api_free_alternative import TranslatorGoogleA
 from ..src_translations.src_deepl_original import TranslatorDeepL
 from ..src_translations.src_libretranslate_original import TranslatorLibreTranslate
 from ..src_translations.src_microsoft_api_free import TranslatorMicrosoftApiFree
+from ..src_translations.src_deepl_free import TranslatorDeepLFree
+from ..src_translations.src_openai_4o_api import TranslatorOpenAI
+from ..src_translations.src_detect import DetectorDeIdioma
+from ..managers.managers_dict import LanguageDictionary
 
 # Carga traducción
 addonHandler.initTranslation()
@@ -30,6 +35,7 @@ class GestorTranslate(
 	TranslatorDeepL,
 	TranslatorLibreTranslate,
 	TranslatorMicrosoftApiFree,
+	TranslatorOpenAI,
 ):
 	"""
 	Clase que gestiona la traducción de texto y el manejo del historial de traducción.
@@ -41,7 +47,19 @@ class GestorTranslate(
 		:param frame: El marco principal de la aplicación.
 		"""
 		super().__init__()
+		TranslatorOpenAI.__init__(self)  # Llama explícitamente al constructor de TranslatorOpenAI
 		self.frame = frame
+		self.data_google = LanguageDictionary(self.frame.gestor_lang.obtener_idiomas("google"))
+
+	def remove_surrogates(self, text):
+		"""
+		Elimina los caracteres sustitutos de una cadena.
+
+		:param text: La cadena a procesar.
+		:return: La cadena sin caracteres sustitutos.
+		"""
+		# Eliminar caracteres sustitutos de la cadena
+		return re.sub(r'[\ud800-\udfff]', '', text)
 
 	def get_choice_lang_destino(self):
 		"""
@@ -53,7 +71,7 @@ class GestorTranslate(
 		value = self.frame.gestor_settings.choiceOnline
 		if value in [0, 1, 2, 3]:
 			return self.frame.gestor_settings.choiceLangDestino_google
-		elif value in [4, 5]:
+		elif value in [4, 5, 8]:
 			return self.frame.gestor_settings.choiceLangDestino_deepl
 		elif value == 6:
 			return self.frame.gestor_settings.choiceLangDestino_libretranslate
@@ -99,6 +117,11 @@ class GestorTranslate(
 				return None, None
 			else:
 				return self.frame.gestor_apis.get_api("libre_translate", self.frame.gestor_settings.api_libretranslate)["key"],  self.frame.gestor_apis.get_api("libre_translate", self.frame.gestor_settings.api_libretranslate)["url"]
+		elif value == 9: # OpenAI
+			if self.frame.gestor_settings.api_openai is None:
+				return None, None
+			else:
+				return self.frame.gestor_apis.get_api("openai", self.frame.gestor_settings.api_openai)["key"], None
 
 	def procesar_listas(self, origen, destino):
 		"""
@@ -145,6 +168,35 @@ class GestorTranslate(
 		# Devolver un diccionario con las listas procesadas
 		return {'origen': origen_procesado, 'destino': destino_procesado}
 
+	def detector_idiomas(self, text):
+		"""
+		Detecta el idioma de un texto dado y muestra el nombre del idioma detectado.
+
+		Parámetros:
+			text (str): El texto cuya lengua se desea detectar.
+
+		Acciones:
+			1. Utiliza DetectorDeIdioma para detectar el idioma del texto.
+			2. Si la detección es exitosa, obtiene el nombre del idioma utilizando los valores de data_google.
+			3. Muestra una descripción del idioma detectado si está disponible, de lo contrario, muestra el nombre del idioma.
+			4. Si la detección no es exitosa, muestra un mensaje de error.
+			5. Desactiva la traducción en gestor_settings.
+
+		Resultado:
+			Muestra un mensaje con el nombre o descripción del idioma detectado, o un mensaje de error si la detección falla.
+		"""
+		result = DetectorDeIdioma().detectar_idioma(text)
+		if result["success"]:
+			idiomas_name = self.data_google.get_values()
+			data = languageHandler.getLanguageDescription(result["data"])
+			if data is None:
+				ui.message(idiomas_name[self.data_google.get_index_by_key_or_value(result["data"])])
+			else:
+				ui.message(data)
+		else:
+			ui.message(_("No se a podido obtener el idioma"))
+		self.frame.gestor_settings.is_active_translate = False
+
 	def translate_various(self, text):
 		"""
 		Traduce el texto dado utilizando el traductor de Google API gratuito y actualiza el historial de traducciones y el texto traducido más reciente.
@@ -165,8 +217,23 @@ class GestorTranslate(
 				- Actualiza el último texto traducido con el texto traducido.
 				- Si el soporte de braille está habilitado, muestra el mensaje del último texto traducido.
 		"""
+		if self.frame.gestor_settings.chkAltLang:
+			detector = DetectorDeIdioma()
+			resultado = detector.detectar_idioma(text)
+			if resultado['success']:
+				idioma_detectado = resultado['data']
+				if idioma_detectado != self.frame.gestor_settings.choiceLangDestino_google_def:
+					lang_to = self.frame.gestor_settings.choiceLangDestino_google_def
+				else:
+					lang_to = self.frame.gestor_settings.choiceLangDestino_google_alt
+			else:
+				# En caso de error en la detección, usar el idioma por defecto
+				lang_to = self.frame.gestor_settings.choiceLangDestino_google_def
+		else:
+			lang_to = self.frame.gestor_settings.choiceLangDestino_google
+
 		prepared = text
-		translated = TranslatorGoogleApiFree().translate_google_api_free(lang_from='auto', lang_to=self.frame.gestor_settings.choiceLangDestino_google, text=prepared)
+		translated = TranslatorGoogleApiFree().translate_google_api_free(lang_from='auto', lang_to=lang_to, text=prepared)
 		if prepared.rstrip() == translated.rstrip():
 			self.frame.gestor_settings._lastTranslatedText = prepared
 			if braille.handler._get_enabled():
@@ -185,8 +252,6 @@ class GestorTranslate(
 				if braille.handler._get_enabled():
 					braille.handler.message(self.frame.gestor_settings._lastTranslatedText)
 				return translated
-
-
 
 	def translate_file(self, text, func_progress):
 		"""
@@ -227,10 +292,10 @@ class GestorTranslate(
 			if self.frame.gestor_settings._enableTranslation:
 				id = self.frame.gestor_settings.choiceOnline
 				if id == 0: # Google 1
-					prepared = text.encode('utf8', ':/')
+					prepared = text.encode('utf8')
 					translated = self.translate_google(prepared, to_language=self.frame.gestor_settings.choiceLangDestino_google)
 				elif id == 1: # Google 2
-					prepared = text.encode('utf8', ':/')
+					prepared = text.encode('utf8')
 					translated = self.translate_google_alternative(prepared, target=self.frame.gestor_settings.choiceLangDestino_google)
 				elif id == 2: # Google 3
 					prepared = text
@@ -244,10 +309,10 @@ class GestorTranslate(
 						logHandler.log.error(_("No tiene ninguna API configurada para el servicio que tiene seleccionado."))
 
 						return text
-					prepared = text.encode('utf8', ':/')
+					prepared = text.encode('utf8', 'surrogatepass')
 					datos = self.translate_deepl(prepared, api_key, use_free_api=True,  source_lang="auto", target_lang=self.frame.gestor_settings.choiceLangDestino_deepl)
 					if isinstance(datos, bytes):
-						translated =  datos.decode('utf-8')
+						translated =  datos.decode('utf-8', 'surrogatepass')
 					elif isinstance(datos, str):
 						translated = datos
 					else:
@@ -257,10 +322,10 @@ class GestorTranslate(
 					if api_key is None:
 						logHandler.log.error(_("No tiene ninguna API configurada para el servicio que tiene seleccionado."))
 						return text
-					prepared = text.encode('utf8', ':/')
+					prepared = text.encode('utf8', 'surrogatepass')
 					datos = self.translate_deepl(prepared, api_key, use_free_api=False,  source_lang="auto", target_lang=self.frame.gestor_settings.choiceLangDestino_deepl)
 					if isinstance(datos, bytes):
-						translated =  datos.decode('utf-8')
+						translated =  datos.decode('utf-8', 'surrogatepass')
 					elif isinstance(datos, str):
 						translated = datos
 					else:
@@ -278,6 +343,19 @@ class GestorTranslate(
 				elif id == 7: # Microsoft
 					prepared = text
 					translated = self.translate_microsoft_api_free(self.frame.gestor_settings.choiceLangOrigen, self.frame.gestor_settings.choiceLangDestino_microsoft, prepared)
+				elif id == 8: # DeepL Gratis
+					translator = TranslatorDeepLFree()
+					translator.source_lang = 'auto'
+					translator.target_lang = self.frame.gestor_settings.choiceLangDestino_deepl
+					prepared = text
+					translated = translator.translate(prepared)
+				elif id == 9: # OpenAI
+					api_key, url = self.get_api()
+					if api_key is None:
+						logHandler.log.error(_("No tiene ninguna API configurada para el servicio que tiene seleccionado."))
+						return text
+					prepared = text
+					translated = self.translate_openai(api_key, prepared, target_language=self.frame.gestor_settings.choiceLangDestino_openai)
 		except Exception as e:
 			msg = \
 _("""Error en la traducción.
@@ -313,7 +391,7 @@ Error:
 
 		for val in speechSequence:
 			if isinstance(val, str):
-				v = self.translate(val)
+				v = self.translate(self.remove_surrogates(val))
 				newSpeechSequence.append(v if v is not None else val)
 				newSpeechSequenceOrigen.append(val)
 				newSpeechSequenceDestino.append(v)
